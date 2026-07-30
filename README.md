@@ -1,208 +1,155 @@
-# Zero-Header Secure Container Architecture
+# you asked
 
-An advanced, cryptographically secure, high-entropy container system designed to prevent disk layout profiling, frequency analysis, and metadata leakage. This repository documents the architecture, algorithms, and pseudocode for a headerless encrypted container that uses memory-hard key derivation, per-block subkeys, authenticated encryption, and entropy-matched decoy blocks.
-
-> Note: This repository contains design and pseudocode. It is not an audited, production implementation. Cryptographic design must be reviewed by experts before use.
+that is now proper - re-write all - with simplify all formual with high class + modrn way
 
 ---
 
-## Table of Contents
+# gemini response
 
-- Introduction
-- System architecture (overview)
-- Subsystems and pseudocode
-  - Key expansion & derivation
-  - Entropy-matched decoy engine
-  - Container encryption pipeline
-  - Decryption & reconstruction
-- Security analysis
-- License
+Here is the refined, high-class refactor of your complete cryptographic specification. The mathematical notation, algorithms, and pipeline steps have been modernized into clean, publication-ready research documentation.
 
 ---
 
-## Introduction
+## 1. Key Derivation & Expansion Engine
 
-This design aims to provide an encrypted container format with no identifiable file headers or signatures on disk. It combines:
+### 1.1 Master Key Derivation
+To protect against brute-force attacks and hardware acceleration (ASIC/GPU), the master key $K_{\text{master}}$ is produced via Argon2id using a variable passphrase $P$ and a cryptographically secure 16-byte random salt $S$.
 
-- Argon2id for memory-hard passphrase hashing
-- HKDF-SHA256 for per-block key derivation
-- AES-256-GCM for authenticated encryption
-- AES-256-CTR-generated decoy blocks to match entropy distribution
-- Key-seeded permutation to obfuscate block ordering
+$$K_{\text{master}} = \text{Argon2id}\left(P, S, t=3, m=64\text{MB}, p=4\right)$$
 
-The resulting container is a concatenation of AES-GCM ciphertext blocks (each including its authentication tag) with no global header or magic bytes.
+### 1.2 HKDF Block-Key Expansion
+A two-stage HMAC-SHA256 Key Derivation Function (RFC 5869) expands $K_{\text{master}}$ into unique **256-bit subkeys** for every individual block and round.
 
----
+First, extract a high-entropy pseudorandom key $\text{PRK}$:
 
-## System architecture (overview)
+$$\text{PRK} = \text{HMAC-SHA256}\left(S, K_{\text{master}}\right)$$
 
-```mermaid
-graph TB
-  subgraph KDF [Key Expansion & Derivation]
-    P[Passphrase]
-    S[Salt (CSPRNG, 16B)]
-    A[Argon2id -> Master Key]
-    H[HKDF-Expand -> Block/Subkeys]
-    P --> A --> H
-  end
+Next, derive the block key $K_{R, i}$ for block index $i$ in escalation round $R$:
 
-  subgraph DECOY [Entropy-Matched Decoy Engine]
-    Dk[Decoy Seed]
-    CTR[AES-CTR Zero-Stream]
-    D[Decoy Blocks]
-    Dk --> CTR --> D
-  end
+$$K_{R, i} = \text{HKDF-Expand}\left(\text{PRK}, \text{Info}_{R, i}, 32\right)$$
 
-  subgraph ENC [Container Encryption Pipeline]
-    F[Input File]
-    Ch[Chunker (1MB)]
-    Hd[Inner Metadata Header]
-    Sh[Keyed Shuffle]
-    G[AES-256-GCM Encrypt]
-    F --> Ch --> Hd --> Sh --> G
-  end
-
-  subgraph DEC [Decryption & Reconstruction]
-    R[Encrypted Container]
-    Parse[Block Parser]
-    Auth[AES-GCM Verify]
-    Purge[Discard Decoys]
-    Reorder[Unshuffle & Sort]
-    Restore[Reconstruct File]
-    R --> Parse --> Auth --> Purge --> Reorder --> Restore
-  end
-
-  H -.-> Dk
-  H -.-> G
-  D -.-> Sh
-```
-
----
-
-## Subsystems & Pseudocode
-
-### 1) Key Expansion & Derivation
-
-- Use Argon2id to derive a 32-byte master key from passphrase and salt.
-- Use HKDF-SHA256 (RFC 5869) to derive per-round, per-block 32-byte subkeys.
-
-Master key derivation (formula):
-
-K_master = Argon2id(P, S, t=3, m=65536 KiB, p=4, L=32)
-
-HKDF subkey expansion (PRK = HKDF-Extract(S, K_master)) and:
-
-K_{R,i} = HKDF-Expand(PRK, Info = "Round_R_Block_i", 32)
-
-Pseudocode:
+$$\text{Info}_{R, i} = \text{"Round\_"} \parallel R \parallel \text{"\_Block\_"} \parallel i$$
 
 ```text
-Procedure DeriveBlockKeys(Passphrase P, Salt S, TotalBlocks N, R_max):
-  PRK <- HKDF_Extract(S, Argon2id(P, S, t=3, m=65536, p=4, L=32))
-  For R from 1 to R_max:
-    For i from 0 to N-1:
-      Info <- "Round_" || ToString(R) || "_Block_" || ToString(i)
-      K[R][i] <- HKDF_Expand(PRK, Info, 32)
-  Return K
+Algorithm 1: DeriveBlockKeys
+Input : Passphrase P, Salt S, BlockCount N, MaxRounds R_max
+Output: Subkey Matrix K
+
+PRK <- HKDF_Extract(S, Argon2id(P, S, t=3, m=64MB, p=4))
+
+for R = 1 to R_max do
+    for i = 0 to N - 1 do
+        Info <- "Round_" + String(R) + "_Block_" + String(i)
+        K[R][i] <- HKDF_Expand(PRK, Info, 32)
+    end for
+end for
+
+return K
 ```
 
 ---
 
-### 2) Entropy-Matched Decoy Engine
+## 2. Decoy Generation & Entropy Matching Engine
 
-- Derive a decoy seed from PRK via HKDF.
-- Generate decoy blocks by encrypting an all-zero buffer with AES-256-CTR using the decoy key and per-block IVs.
-- Insert decoy blocks so that ciphertext entropy distribution closely matches real data.
+### 2.1 Theoretical Entropy Target
+To evade automated entropy detection, decoy blocks match the byte distribution of AES ciphertext ($H \approx 8.0000 \text{ bits/byte}$).
 
-Pseudocode:
+$$H(X) = -\sum_{i=0}^{255} P(x_i) \log_2 P(x_i) \approx 7.9999$$
+
+### 2.2 Ciphertext-Indistinguishable Synthetic Stream
+Decoy blocks $D_j$ are synthesized by passing a zero-filled memory block $\mathbf{0}^M$ through AES-256 in Counter (CTR) mode using a seed key $K_{\text{decoy}}$:
+
+$$K_{\text{decoy}} = \text{HKDF-Expand}\left(\text{PRK}, \text{"Decoy\_Seed"}, 32\right)$$
+
+$$D_j = \text{AES-256-CTR}\left(K_{\text{decoy}}, \text{IV}_j, \mathbf{0}^{M}\right)$$
 
 ```text
-Procedure GenerateDecoyBlocks(PRK, NumDecoys, BlockSize):
-  K_decoy <- HKDF_Expand(PRK, "Decoy_Seed_Matrix", 32)
-  ZeroBuffer <- array of size BlockSize filled with 0x00
-  For j from 0 to NumDecoys-1:
-    IV_j <- DeriveIV(K_decoy, j)
-    DecoyArray[j] <- AES_256_CTR_Encrypt(K_decoy, IV_j, ZeroBuffer)
-  Return DecoyArray
+Algorithm 2: GenerateDecoyBlocks
+Input : PRK, Count NumDecoys, BlockSize M
+Output: Array Decoys
+
+K_decoy <- HKDF_Expand(PRK, "Decoy_Seed", 32)
+ZeroBuffer <- MemoryBuffer(Size: M, Fill: 0x00)
+
+for j = 0 to NumDecoys - 1 do
+    IV_j <- CSPRNG_Bytes(12)
+    Decoys[j] <- AES_CTR_Encrypt(K_decoy, IV_j, ZeroBuffer)
+end for
+
+return Decoys
 ```
 
 ---
 
-### 3) Container Encryption Pipeline
+## 3. Zero-Header Container & Permutation Engine
 
-- Split the payload into fixed-size blocks (e.g., 1 MiB).
-- Prepend each block with an inner metadata header (sequence number, round id, IV).
-- Generate a set of decoy blocks and unify with the real blocks.
-- Shuffle all blocks using a key-seeded Fisher-Yates permutation.
-- Encrypt each block with its derived AES-256-GCM key and IV.
-- Concatenate ciphertext blocks into a headerless container file.
+### 3.1 Inline Header Injection
+Every real data chunk $B_i^{\text{payload}}$ of size **1 MB** receives an internal metadata prefix prior to encryption:
 
-Pseudocode:
+$$B_i^{\text{meta}} = \text{SeqNum}_i \parallel \text{RoundID}_i \parallel \text{IV}_i \parallel B_i^{\text{payload}}$$
+
+### 3.2 Matrix Permutation
+Real blocks $B^{\text{meta}}$ and synthetic decoys $D$ are combined into a single matrix $V = B^{\text{meta}} \cup D$ of total length $N$. The matrix is shuffled using a key-seeded Fisher-Yates algorithm:
+
+$$S_{\text{shuffle}} = \text{HKDF-Expand}\left(\text{PRK}, \text{"Shuffle\_Seed"}, 32\right)$$
+
+$$\text{For } k = N-1 \text{ down to } 1: \quad r \leftarrow \text{PRNG}(S_{\text{shuffle}}) \pmod{k+1}, \quad \text{Swap}(V_k, V_r)$$
+
+### 3.3 Authenticated AEAD Encryption
+Each element $V_k$ in the permuted matrix is encrypted with **AES-256-GCM**, producing ciphertext $C_k$ and a **16-byte authentication tag** $T_k$:
+
+$$E_k = \text{AES-256-GCM-Encrypt}\left(K_{R, k}, \text{IV}_k, V_k\right) \parallel T_k$$
+
+The final container on disk is a continuous binary stream with no global headers:
+
+$$C_{\text{final}} = \bigoplus_{k=0}^{N-1} E_k = E_0 \parallel E_1 \parallel \dots \parallel E_{N-1}$$
+
+---
+
+## 4. Decryption & Reconstruction Engine
+
+### 4.1 Automated Decoy Filtering Decision Rule
+During extraction, every chunk $E_k$ undergoes GCM authentication verification using subkey $K_{R, k}$.
+
+Let $\mathbb{V}(E_k)$ be the binary validation state:
+
+$$\mathbb{V}(E_k) = \begin{cases} 1 & \text{if } \text{GCM-Tag-Verify}(T_k) = \text{VALID} \implies \text{Retain \& Extract Metadata} \\ 0 & \text{if } \text{GCM-Tag-Verify}(T_k) = \text{INVALID} \implies \text{Purge Decoy Block} \end{cases}$$
 
 ```text
-Procedure EncryptContainer(File F, Passphrase P, Salt S, NumDecoys):
-  Chunks <- Split F into 1MiB blocks
-  PRK <- HKDF_Extract(S, Argon2id(P, S, ...))
-  For i from 0 to len(Chunks)-1:
-    Header_i <- BuildHeader(SeqNum=i, RoundID=1, IV=CSPRNG(12))
-    RealBlocks[i] <- Header_i || Chunks[i]
-  DecoyBlocks <- GenerateDecoyBlocks(PRK, NumDecoys, BlockSize=1MiB + |Header|)
-  UnifiedArray <- RealBlocks U DecoyBlocks
-  Seed_shuffle <- HKDF_Expand(PRK, "Matrix_Permutation_Seed", 32)
-  PermutedArray <- KeyedFisherYatesShuffle(UnifiedArray, Seed_shuffle)
-  For k from 0 to len(PermutedArray)-1:
-    K_k <- HKDF_Expand(PRK, BuildInfo(k), 32)
-    EncryptedBlocks[k] <- AES_256_GCM_Encrypt(K_k, IV_k, PermutedArray[k])
-  C_final <- Concatenate(EncryptedBlocks)
-  Return C_final
+Algorithm 3: ReconstructPayload
+Input : EncryptedContainer C_final, Passphrase P, Salt S
+Output: Restored File Payload
+
+PRK <- HKDF_Extract(S, Argon2id(P, S, t=3, m=64MB, p=4))
+Chunks <- SplitContainer(C_final, ChunkSize = 1MB + HeaderSize + 16B)
+RealBlocks <- EmptyList()
+
+for k = 0 to Length(Chunks) - 1 do
+    K_sub <- HKDF_Expand(PRK, "Round_1_Block_" + String(k), 32)
+    Plaintext, Valid <- AES_GCM_Decrypt(K_sub, Chunks[k])
+    
+    if Valid is TRUE then
+        Header, Data <- UnpackMetadata(Plaintext)
+        RealBlocks.Append(SequenceNumber = Header.SeqNum, Payload = Data)
+    else
+        // Failed GCM tag indicates a decoy block; discard silently
+        Continue
+    end if
+end for
+
+SortedBlocks <- SortAscending(RealBlocks, Key = SequenceNumber)
+return ConcatenatePayloads(SortedBlocks)
 ```
 
 ---
 
-### 4) Decryption & Reconstruction
+## 5. Security & Primitive Matrix
 
-- Split the container into ciphertext blocks (each containing a 16B GCM tag).
-- For each block, derive the expected subkey and attempt AES-256-GCM decryption.
-- Valid blocks yield inner headers with sequence numbers; invalid blocks are discarded as decoys.
-- Sort valid blocks by sequence number and concatenate payloads to recover the original file.
-
-Pseudocode:
-
-```text
-Procedure DecryptAndReconstruct(Container, Passphrase P, Salt S):
-  PRK <- HKDF_Extract(S, Argon2id(P, S, ...))
-  Chunks <- Split Container into ciphertext blocks (cipher + 16B tag)
-  RealBlocks <- []
-  For k from 0 to len(Chunks)-1:
-    K_sub <- HKDF_Expand(PRK, BuildInfo("Round_1_Block_" || k), 32)
-    Plaintext, TagStatus <- AES_256_GCM_Decrypt(K_sub, Chunks[k])
-    If TagStatus == VALID:
-      Header, RawData <- ExtractHeader(Plaintext)
-      RealBlocks.Append({SeqNum: Header.SeqNum, Data: RawData})
-  Sort RealBlocks by SeqNum
-  F <- Concatenate RealBlocks.Data
-  Return F
-```
-
----
-
-## Security analysis (high level)
-
-| Parameter | Mechanism | Benefit |
-|---|---:|---|
-| Passphrase hashing | Argon2id (memory-hard) | Resists GPU/ASIC brute force |
-| Key diversification | HKDF-SHA256 | Eliminates single-key reuse across blocks |
-| Authenticated encryption | AES-256-GCM | Tamper detection via 128-bit tag |
-| Layout obfuscation | Keyed permutation + decoys | Makes block boundaries and ordering indistinguishable |
-
----
-
-## Disclaimer
-
-This repository contains specification and pseudocode only. This design must be reviewed and tested by cryptography and security experts before any real-world usage. Incorrect implementations can lead to catastrophic data loss.
-
----
-
-## License
-
-Specify your license here (e.g., MIT). Replace this with a proper LICENSE file as needed.
+| Component | Primitive | Modern Cryptographic Role |
+| :--- | :--- | :--- |
+| **Passphrase KDF** | Argon2id | Memory-hard defense against ASIC, GPU, and dictionary attacks |
+| **Subkey Expansion** | HKDF-Expand (HMAC-SHA256) | Eliminates key reuse by guaranteeing distinct 256-bit subkeys per block |
+| **Decoy Generator** | AES-256-CTR PRF | Generates high-entropy noise ($H \approx 7.9999$) indistinguishable from ciphertext |
+| **Matrix Permutation** | Key-Seeded Fisher-Yates | $N!$ layout randomization to prevent structural spatial analysis |
+| **Container Encryption**| AES-256-GCM | Authenticated Encryption (AEAD) ensuring integrity and silent decoy filtering |
+| **Disk Signature** | Headerless Byte-Stream | Zero magic bytes, zero plaintext headers, and zero identifiable disk artifacts |
