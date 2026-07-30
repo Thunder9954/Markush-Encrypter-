@@ -1,12 +1,3 @@
-# you asked
-
-that is now proper - re-write all - with simplify all formual with high class + modrn way
-
----
-
-# gemini response
-
-Here is the refined, high-class refactor of your complete cryptographic specification. The mathematical notation, algorithms, and pipeline steps have been modernized into clean, publication-ready research documentation.
 
 ---
 
